@@ -1,0 +1,125 @@
+name: Build TWRP Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      twrp_branch:
+        description: 'TWRP Minimal Manifest Branch'
+        required: true
+        default: 'twrp-7.1'
+        type: choice
+        options:
+          - 'twrp-7.1'
+          - 'twrp-8.1'
+  push:
+    paths:
+      - 'device/tplink/TP904a/**'
+      - '.github/workflows/build-twrp.yml'
+
+jobs:
+  build:
+    name: Build TWRP for TP-Link Neffos X1 Lite (TP904a)
+    runs-on: ubuntu-20.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        run: |
+          echo "Freeing disk space on runner..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -a -f || true
+          df -h
+
+      - name: Set up Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git-core gnupg flex bison build-essential zip curl zlib1g-dev \
+            gcc-multilib g++-multilib libc6-dev-i386 libncurses5 libncurses5-dev \
+            x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils \
+            xsltproc unzip fontconfig openjdk-8-jdk python2 python-is-python2 rsync lzop bc
+          
+          # Install Google Repo tool
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          sudo ln -sf ~/bin/repo /usr/bin/repo
+
+          # Git identity
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git config --global color.ui false
+
+      - name: Initialize TWRP Minimal Manifest
+        run: |
+          mkdir -p ~/work/twrp
+          cd ~/work/twrp
+          
+          BRANCH="${{ github.event.inputs.twrp_branch || 'twrp-7.1' }}"
+          echo "Initializing repo with branch $BRANCH..."
+          repo init -u https://github.com/minimal-tw-rp/platform_manifest_twrp_omni.git -b "$BRANCH" --depth=1
+          
+          echo "Syncing repository sources..."
+          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
+
+      - name: Import Device Tree
+        run: |
+          DEVICE_DEST=~/work/twrp/device/tplink/TP904a
+          mkdir -p "$DEVICE_DEST"
+
+          if [ -d "device/tplink/TP904a" ]; then
+            echo "Copying device/tplink/TP904a into build tree..."
+            cp -r device/tplink/TP904a/* "$DEVICE_DEST/"
+          else
+            echo "Copying root files into device tree..."
+            cp -r * "$DEVICE_DEST/"
+          fi
+
+          echo "Device Tree contents:"
+          ls -la "$DEVICE_DEST"
+
+      - name: Build TWRP Recovery Image
+        run: |
+          cd ~/work/twrp
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+
+          source build/envsetup.sh
+          
+          # Lunch combo
+          if lunch omni_TP904a-eng; then
+            echo "Successfully lunched omni_TP904a-eng"
+          elif lunch twrp_TP904a-eng; then
+            echo "Successfully lunched twrp_TP904a-eng"
+          else
+            echo "Failed to lunch target combo!" && exit 1
+          fi
+
+          echo "Compiling recoveryimage..."
+          mka recoveryimage -j$(nproc --all)
+
+      - name: Verify and Prepare Artifacts
+        run: |
+          RECOVERY_OUT=~/work/twrp/out/target/product/TP904a/recovery.img
+          if [ -f "$RECOVERY_OUT" ]; then
+            echo "Recovery successfully compiled!"
+            mkdir -p ./output
+            cp "$RECOVERY_OUT" ./output/recovery.img
+            cd ./output
+            sha256sum recovery.img > recovery.img.sha256
+            md5sum recovery.img > recovery.img.md5
+            ls -la
+          else
+            echo "Error: recovery.img not found!" && exit 1
+          fi
+
+      - name: Upload Recovery Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TWRP-TP904a-recovery
+          path: ./output/*

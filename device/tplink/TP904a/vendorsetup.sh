@@ -1,0 +1,2 @@
+add_lunch_combo omni_TP904a-eng
+add_lunch_combo twrp_TP904a-eng
