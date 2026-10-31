@@ -19,7 +19,7 @@ on:
 jobs:
   build:
     name: Build TWRP for TP-Link Neffos X1 Lite (TP904a)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
